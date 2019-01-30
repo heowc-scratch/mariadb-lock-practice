@@ -8,6 +8,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.junit4.SpringRunner;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -18,16 +22,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(SpringRunner.class)
 @SpringBootTest
-public class ApplicationLockTests {
+public class UserLockTests {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private static final String APPLICATION_LOCK = "select GET_LOCK(?, 10)";
+    private static final String USER_LOCK = "select GET_LOCK(?, 3)";
 
-    private static final String APPLICATION_UNLOCK = "select RELEASE_LOCK(?)";
+    private static final String USER_UNLOCK = "select RELEASE_LOCK(?)";
 
-    private static final String IS_APPLICATION_LOCKED = "select IS_FREE_LOCK(?)";
+    private static final String IS_USER_LOCKED = "select IS_FREE_LOCK(?)";
 
     private static final String COUNT_ALL_SQL = "SELECT COUNT(*) FROM push_message";
 
@@ -39,18 +43,18 @@ public class ApplicationLockTests {
     private static final String TRUNCATE_SQL = "TRUNCATE push_message";
 
     private boolean isUnlocked() {
-        return Objects.equals(jdbcTemplate.queryForObject(IS_APPLICATION_LOCKED, Integer.class, String.format(LOCK_PREFIX_NAME, TABLE_NAME)), 1);
+        return Objects.equals(jdbcTemplate.queryForObject(IS_USER_LOCKED, Integer.class, String.format(LOCK_PREFIX_NAME, TABLE_NAME)), 1);
     }
 
     @Test
-    public void 애플리케이션_락_걸고_입력시_입력이_안되어_데이터_갯수_조회시_0_반환() {
+    public void 유저_락_걸고_입력시_입력이_안되어_데이터_갯수_조회시_0_반환() {
         // given
         List<PushMessage> pushMessageList = Arrays.asList(
                 new PushMessage("content 1", "wait", "heowc", LocalDateTime.now(Clock.systemUTC()), null),
                 new PushMessage("content 2", "wait", "heowc", LocalDateTime.now(Clock.systemUTC()), null));
 
         // when
-        jdbcTemplate.queryForMap(APPLICATION_LOCK, String.format(LOCK_PREFIX_NAME, TABLE_NAME));
+        jdbcTemplate.queryForMap(USER_LOCK, String.format(LOCK_PREFIX_NAME, TABLE_NAME));
 
         if (isUnlocked()) {
             for (PushMessage pushMessage : pushMessageList) {
@@ -58,7 +62,7 @@ public class ApplicationLockTests {
             }
         }
 
-        jdbcTemplate.queryForMap(APPLICATION_UNLOCK, String.format(LOCK_PREFIX_NAME, TABLE_NAME));
+        jdbcTemplate.queryForMap(USER_UNLOCK, String.format(LOCK_PREFIX_NAME, TABLE_NAME));
 
         // then
         Long count = jdbcTemplate.queryForObject(COUNT_ALL_SQL, Long.class);
@@ -84,6 +88,29 @@ public class ApplicationLockTests {
         assertThat(count).isEqualTo(2L);
     }
 
+    @Test
+    public void 유저_락을_걸고_다른_유저에서_다시_유저_락을_걸면_0을_반환() throws SQLException {
+        // given
+        final Connection connection = jdbcTemplate.getDataSource().getConnection();
+        final PreparedStatement preparedStatement = connection.prepareStatement(USER_LOCK);
+        preparedStatement.setString(1, String.format(LOCK_PREFIX_NAME, TABLE_NAME));
+        final ResultSet resultSet = preparedStatement.executeQuery();
+        resultSet.first();
+        final boolean isLocked = resultSet.getInt(1) == 1;
+
+        // then
+        // 3초간 sleep
+        final boolean result = new Integer(0).equals(jdbcTemplate.queryForObject(USER_LOCK, Integer.class, String.format(LOCK_PREFIX_NAME, TABLE_NAME)));
+
+        // when
+        assertThat(isLocked).isTrue();
+        assertThat(result).isTrue();
+
+        resultSet.close();
+        preparedStatement.close();
+        connection.close();
+        jdbcTemplate.queryForMap(USER_UNLOCK, String.format(LOCK_PREFIX_NAME, TABLE_NAME));
+    }
 
     @After
     public void delete() {

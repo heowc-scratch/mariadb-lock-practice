@@ -1,8 +1,4 @@
 
-CREATE DATABASE test;
-
-USE test;
-
 DROP TABLE IF EXISTS push_message;
 
 CREATE TABLE IF NOT EXISTS push_message (
